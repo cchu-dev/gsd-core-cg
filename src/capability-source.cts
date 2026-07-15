@@ -41,6 +41,12 @@ const shellSeam = require('./shell-command-projection.cjs') as {
 const capValidator = require('./capability-validator.cjs') as ValidatorModule;
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
+const capabilityRegistry = require('./capability-registry.cjs') as {
+  capabilities?: Record<string, unknown>;
+  runtimes?: Record<string, unknown>;
+};
+
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const semverMod = require('./semver-compare.cjs') as {
   semverSatisfies: (version: unknown, range: unknown) => boolean;
   compareSemverCore: (a: unknown, b: unknown) => -1 | 0 | 1;
@@ -71,6 +77,51 @@ interface ValidatorModule {
   validateAgainstContract: (cap: unknown, capId: string) => string[];
   validateConsumesGlobal: (capMap: Map<string, unknown>) => string[];
   validateCrossCapability: (capMap: Map<string, unknown>, centralKeys: Set<string>) => string[];
+}
+
+const CAPABILITY_MANIFEST_MAX_BYTES = 8 * 1024 * 1024;
+
+function readCapabilityManifest(filePath: string): Record<string, unknown> | null {
+  try {
+    const raw = ledgerMod.readSmallRegularFile(filePath, CAPABILITY_MANIFEST_MAX_BYTES);
+    if (raw === null) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function readCapabilityTree(root: string): Map<string, unknown> {
+  const result = new Map<string, unknown>();
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(root, { withFileTypes: true });
+  } catch {
+    return result;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name === '.staging') continue;
+    const manifest = readCapabilityManifest(path.join(root, entry.name, 'capability.json'));
+    const id = manifest && typeof manifest['id'] === 'string' ? manifest['id'] : null;
+    if (id) result.set(id, manifest);
+  }
+  return result;
+}
+
+function crossCapabilityMap(id: string, cap: Record<string, unknown>, gsdHome: string): Map<string, unknown> {
+  // The compiled registry is the package's first-party declaration source. It is
+  // shipped in installed layouts even though the source capabilities/ tree is not.
+  const merged = new Map<string, unknown>([
+    ...Object.entries(capabilityRegistry.capabilities ?? {}),
+    ...Object.entries(capabilityRegistry.runtimes ?? {}),
+  ]);
+  const installedRoot = path.join(gsdHome, '.gsd', 'capabilities');
+  for (const [capId, manifest] of readCapabilityTree(installedRoot)) merged.set(capId, manifest);
+  // The incoming bundle is not installed yet, so it must be the final map entry.
+  merged.set(id, cap);
+  return merged;
 }
 
 /** Parsed spec discriminant. */
@@ -739,7 +790,7 @@ function stageValidated(opts: {
     }
 
     // Cross-capability validations (contract, consumes, cross-capability).
-    const capMap = new Map<string, unknown>([[id, cap]]);
+    const capMap = crossCapabilityMap(id, cap, gsdHome);
     const centralKeys = new Set<string>();
     const crossErrs = [
       ...capValidator.validateAgainstContract(cap, id),
