@@ -181,6 +181,24 @@ EXECUTE_POST_HOOKS_JSON=$(gsd_run loop render-hooks execute:post --raw)
 TDD_MODE=$(gsd_run loop render-hooks execute:post --active-cap tdd)
 ```
 
+### Execute:pre capability dispatch
+
+Before the first resume check or executor dispatch, resolve and run the active
+`execute:pre` hooks. This point is shared by worktree and sequential execution.
+Read `activeHooks` from the JSON in-context (never through a shell parser), then
+dispatch each active step in array order: `ref.skill` uses
+`Skill(skill="gsd-${ref.skill}", args="${PHASE_NUMBER}")`, and `ref.agent` uses
+the declared agent and filled `fragment.inline`. Contributions are injected into
+their declared target before execution begins. Gate evaluation follows the
+generic point-runner contract in `references/loop-hook-dispatch.md`.
+
+```bash
+EXECUTE_PRE_HOOKS_JSON=$(gsd_run loop render-hooks execute:pre --raw)
+```
+
+If `activeHooks` is empty, continue silently. A blocking gate whose evaluated
+verdict has `block == true` halts before any executor is spawned.
+
 <step name="safe_resume_gate">
 Before trusting `STATE.md` or dispatching any executor, derive `CURRENT_PLAN_ID`
 from the active incomplete plan in `INIT`, then search recent history:
@@ -561,6 +579,21 @@ increases monotonically across waves. `{status}` is `complete` (success),
 
    The dispatch branches in step 3 below MUST gate on `USE_WORKTREES_FOR_PLAN` for the current plan, not on the project-level `USE_WORKTREES`.
 
+2.75. **Execute:wave:pre capability dispatch (before either executor path):**
+
+Resolve this point after the wave is selected and before spawning the first
+worktree or sequential executor. The same rendered envelope and array-order
+dispatch apply to both paths:
+
+```bash
+WAVE_PRE_HOOKS_JSON=$(gsd_run loop render-hooks execute:wave:pre --raw)
+```
+
+Read `activeHooks` in-context. Dispatch step skills/agents, inject contribution
+fragments, and evaluate gates using the generic point-runner contract. A blocking
+`block == true` verdict stops the wave before either the worktree or sequential
+executor branch runs.
+
 3. **Spawn executor agents:**
 
    **Emit a plan-start heartbeat (literal line, no tool call) immediately before
@@ -573,6 +606,8 @@ increases monotonically across waves. `{status}` is `complete` (success),
    For 1M+ models (Opus 4.6, Sonnet 4.6), richer context can be passed directly.
 
    **Worktree mode** (`USE_WORKTREES_FOR_PLAN` is not `false` — evaluated per-plan in step 2.5):
+
+   The `execute:wave:pre` dispatch above has completed before this worktree is created.
 
    Before spawning, capture the current HEAD:
    ```bash
@@ -694,6 +729,8 @@ increases monotonically across waves. `{status}` is `complete` (success),
    > **ORCHESTRATOR RULE — CODEX RUNTIME**: After calling Agent() above to spawn executor agent(s), stop working on this task immediately. Do not read more files, edit code, or run tests related to this task while the subagent is active. Wait for the subagent to return its result. This prevents duplicate work, conflicting edits, and wasted context. Only resume when the subagent result is available.
 
    **Sequential mode** (`USE_WORKTREES_FOR_PLAN` is `false` — either project-level `USE_WORKTREES=false`, or per-plan submodule intersection forced it false in step 2.5):
+
+   The `execute:wave:pre` dispatch above has completed before this main-tree executor runs.
 
    Omit `isolation="worktree"` from the Agent call. Replace the `<parallel_execution>` block with:
 
