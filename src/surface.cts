@@ -82,6 +82,10 @@ interface ApplySurfaceOptions {
   platform?: string;
 }
 
+interface CapabilitySurfaceRegistry {
+  capabilities?: Record<string, unknown>;
+}
+
 // ---------------------------------------------------------------------------
 // State IO
 // ---------------------------------------------------------------------------
@@ -135,6 +139,108 @@ function readSurface(runtimeConfigDir: string): SurfaceState | null {
  */
 function writeSurface(runtimeConfigDir: string, surfaceState: SurfaceState): void {
   platformWriteSync(path.join(runtimeConfigDir, SURFACE_FILE_NAME), JSON.stringify(surfaceState, null, 2) + '\n');
+}
+
+function readCapabilityManifest(capabilityRoot: string, id: string): Record<string, unknown> | null {
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(path.join(capabilityRoot, id, 'capability.json'), 'utf8'));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeCapabilityRoot(scopeRoot: string): string {
+  return path.basename(path.resolve(scopeRoot)) === 'capabilities'
+    ? path.resolve(scopeRoot)
+    : path.join(path.resolve(scopeRoot), '.gsd', 'capabilities');
+}
+
+function isFirstPartySkillStem(runtimeConfigDir: string, stem: string): boolean {
+  try {
+    return fs.existsSync(path.join(findInstallSourceRoot(runtimeConfigDir), `${stem}.md`));
+  } catch {
+    return false;
+  }
+}
+
+function capabilitySkillDestinations(
+  runtimeConfigDir: string,
+  runtime: string,
+  scope: 'local' | 'global',
+): Array<{ root: string; prefix: string }> {
+  const layout = runtimeArtifactLayout.resolveRuntimeArtifactLayout(runtime, runtimeConfigDir, scope);
+  return layout.kinds
+    .filter((kind: { kind: string }) => kind.kind === 'skills')
+    .map((kind: { destSubpath: string; prefix: string; home?: string }) => ({
+      root: path.resolve(kind.home ?? runtimeConfigDir, kind.destSubpath),
+      prefix: kind.prefix,
+    }));
+}
+
+function capabilitySkillStems(manifest: Record<string, unknown>): string[] {
+  const raw = manifest['skills'];
+  return Array.isArray(raw)
+    ? raw.filter((stem): stem is string => typeof stem === 'string' && /^[a-z][a-z0-9-]*$/.test(stem))
+    : [];
+}
+
+/** Materialize installed capability-owned skills using the runtime descriptor's skill layout. */
+function materializeCapabilitySkills(
+  runtimeConfigDir: string,
+  capabilityRoot: string,
+  runtime: string,
+  scope: 'local' | 'global' = 'global',
+): void {
+  capabilityRoot = normalizeCapabilityRoot(capabilityRoot);
+  const destinations = capabilitySkillDestinations(runtimeConfigDir, runtime, scope);
+  if (destinations.length === 0) return;
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(capabilityRoot, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name === '.staging') continue;
+    const manifest = readCapabilityManifest(capabilityRoot, entry.name);
+    if (!manifest) continue;
+    for (const stem of capabilitySkillStems(manifest)) {
+      if (isFirstPartySkillStem(runtimeConfigDir, stem)) continue;
+      const source = path.join(capabilityRoot, entry.name, 'skills', stem);
+      if (!fs.existsSync(path.join(source, 'SKILL.md'))) continue;
+      for (const destination of destinations) {
+        const target = path.join(destination.root, `${destination.prefix}${stem}`);
+        fs.mkdirSync(destination.root, { recursive: true });
+        fs.cpSync(source, target, { recursive: true });
+      }
+    }
+  }
+}
+
+/** Withdraw one capability's physical skill surface; first-party skill dirs are immutable. */
+function withdrawCapabilitySkills(
+  runtimeConfigDir: string,
+  capabilityRoot: string,
+  id: string,
+  runtime: string,
+  scope: 'local' | 'global' = 'global',
+  manifestOverride?: Record<string, unknown>,
+): void {
+  capabilityRoot = normalizeCapabilityRoot(capabilityRoot);
+  const manifest = manifestOverride ?? readCapabilityManifest(capabilityRoot, id);
+  if (!manifest) return;
+  const destinations = capabilitySkillDestinations(runtimeConfigDir, runtime, scope);
+  for (const stem of capabilitySkillStems(manifest)) {
+    if (isFirstPartySkillStem(runtimeConfigDir, stem)) continue;
+    for (const destination of destinations) {
+      try {
+        fs.rmSync(path.join(destination.root, `${destination.prefix}${stem}`), { recursive: true, force: true });
+      } catch { /* best-effort idempotent withdrawal */ }
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -206,6 +312,7 @@ function normalizeSkillManifest(runtimeConfigDir: string, manifest: Map<string, 
  *     participate in the base skill set and their requires: chains expand.
  */
 function resolveSurface(runtimeConfigDir: string, manifest: Map<string, string[]> | object, clusterMap?: ClusterMap | Record<string, string[]>, registry?: { capabilityClusters?: Record<string, string[]>; profileMembership?: Record<string, { tier: string; profiles: string[] }> }): { name: string; skills: Set<string>; agents: Set<string> } {
+  const skillManifest = normalizeSkillManifest(runtimeConfigDir, manifest);
   // Merge capability clusters into the cluster map when registry is provided.
   // The ADR-857 phase 4a HARD gate guarantees that when a capId matches a CLUSTERS
   // key, the values are EQUAL — so the spread is idempotent for matching names.
@@ -231,14 +338,16 @@ function resolveSurface(runtimeConfigDir: string, manifest: Map<string, string[]
         if (!Array.isArray(existing)) { merged[capId] = val; continue; }
         // Values differ → hand-authored wins (skip the override)
         if (existing.length !== val.length || existing.some((v, i) => v !== val[i])) continue;
+        // An identical first-party cluster is already authoritative; retain it unchanged.
+        continue;
       }
       // Prototype-pollution guard (parity with _capabilitySkillsForMode in install-profiles.cts)
       if (capId === '__proto__' || capId === 'constructor' || capId === 'prototype') continue;
-      merged[capId] = val;
+      const thirdPartyStems = val.filter((stem) => !skillManifest.has(stem));
+      if (thirdPartyStems.length > 0) merged[capId] = thirdPartyStems;
     }
     cm = merged;
   }
-  const skillManifest = normalizeSkillManifest(runtimeConfigDir, manifest);
   const surface = readSurface(runtimeConfigDir);
 
   // Determine base profile name: from surface state or from .gsd-profile marker
@@ -646,6 +755,8 @@ export = {
   writeSurface,
   resolveSurface,
   applySurface,
+  materializeCapabilitySkills,
+  withdrawCapabilitySkills,
   listSurface,
   // Exported for testing and for callers that need stand-alone pruning
   pruneSkillDirs,

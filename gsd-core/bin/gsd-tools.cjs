@@ -1946,12 +1946,21 @@ async function runCommand(command, args, cwd, raw, defaultValue, originalCommand
           raw,
         );
       } else if (capSubcommand === 'install') {
-        // capability install <spec> [--integrity sha512-…] [--scope global|project] [--yes] [--shared-file <rel>]…
+        // capability install <spec> [--integrity sha512-…] [--scope global|project] [--runtime <r>] [--config-dir <dir>] [--yes] [--shared-file <rel>]…
         const spec = args[2];
         if (!spec || spec.startsWith('--')) {
           error('Missing <spec> for: capability install <spec>', ERROR_REASON ? ERROR_REASON.USAGE : undefined);
         }
         const { scope, runtimeDir } = capResolveScope(capFlagValue('--scope'));
+        const installRuntime = capFlagValue('--runtime');
+        const installConfigDir = capFlagValue('--config-dir');
+        const installSurface = installRuntime || installConfigDir
+          ? {
+              runtime: installRuntime || 'claude',
+              runtimeConfigDir: require('./lib/runtime-homes.cjs').getGlobalConfigDir(installRuntime || 'claude', installConfigDir),
+              scope: scope === 'project' ? 'local' : 'global',
+            }
+          : undefined;
         const lifecycle = require('./lib/capability-lifecycle.cjs');
         const trust = require('./lib/capability-trust.cjs');
         // Finding 5(b): bound the --shared-file COUNT EARLY — before reconcile, source resolution,
@@ -1979,6 +1988,7 @@ async function runCommand(command, args, cwd, raw, defaultValue, originalCommand
           // consent home, NOT in the repo). The lifecycle records nothing for global scope.
           scope,
           consentStoreDir: capConsentHome(),
+          materialize: installSurface,
         });
         if (res.status === 'installed') {
           output({
@@ -2122,12 +2132,21 @@ async function runCommand(command, args, cwd, raw, defaultValue, originalCommand
           }
         }
       } else if (capSubcommand === 'remove') {
-        // capability remove <id> [--purge-data] [--scope global|project]
+        // capability remove <id> [--purge-data] [--scope global|project] [--runtime <r>] [--config-dir <dir>]
         const id = args[2];
         if (!id || id.startsWith('--')) {
           error('Missing <id> for: capability remove <id>', ERROR_REASON ? ERROR_REASON.USAGE : undefined);
         }
         const { scope, runtimeDir } = capResolveScope(capFlagValue('--scope'));
+        const removeRuntime = capFlagValue('--runtime');
+        const removeConfigDir = capFlagValue('--config-dir');
+        const removeSurface = removeRuntime || removeConfigDir
+          ? {
+              runtime: removeRuntime || 'claude',
+              runtimeConfigDir: require('./lib/runtime-homes.cjs').getGlobalConfigDir(removeRuntime || 'claude', removeConfigDir),
+              scope: scope === 'project' ? 'local' : 'global',
+            }
+          : undefined;
         const lifecycle = require('./lib/capability-lifecycle.cjs');
         const ledgerMod = require('./lib/capability-ledger.cjs');
         capRunReconcile(runtimeDir, lifecycle, scope); // UX-2: surface reconcile warnings on stderr
@@ -2155,6 +2174,7 @@ async function runCommand(command, args, cwd, raw, defaultValue, originalCommand
           // bundle of the same id cannot silently re-activate against a stale consent.
           scope,
           consentStoreDir: capConsentHome(),
+          materialize: removeSurface,
         });
         if (res.status === 'removed') {
           // #1459 finding 3: a project removal whose consent revoke FAILED (e.g. the consent-store lock

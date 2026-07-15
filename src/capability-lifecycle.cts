@@ -92,6 +92,11 @@ const { platformWriteSync, retryRenameSync } = require('./shell-command-projecti
 const semverMod = require('./semver-compare.cjs') as {
   compareSemverCore: (a: unknown, b: unknown) => -1 | 0 | 1;
 };
+const surfaceMod = require('./surface.cjs') as {
+  materializeCapabilitySkills: (runtimeConfigDir: string, capabilityRoot: string, runtime: string, scope?: 'local' | 'global') => void;
+  withdrawCapabilitySkills: (runtimeConfigDir: string, capabilityRoot: string, id: string, runtime: string, scope?: 'local' | 'global', manifest?: Record<string, unknown>) => void;
+};
+const { materializeCapabilitySkills, withdrawCapabilitySkills } = surfaceMod;
 /* eslint-enable @typescript-eslint/no-require-imports */
 
 // ---------------------------------------------------------------------------
@@ -185,6 +190,12 @@ interface LifecycleOptions {
    * hand-edited to a different manifest id cannot silently act on (and overwrite) another capability.
    */
   expectedId?: string;
+  /** Optional physical runtime-surface projection for install/remove parity. */
+  materialize?: {
+    runtimeConfigDir: string;
+    runtime: string;
+    scope: 'local' | 'global';
+  };
   /**
    * Test seam: override the source resolver. Must honor promote:false semantics — return a
    * staged dir (left on disk for the caller to promote/clean). Defaults to the real resolver.
@@ -1022,6 +1033,14 @@ async function installCapability(spec: string, opts: LifecycleOptions): Promise<
     try {
       ({ backupDir } = promoteStagingToFinal(stagedDir, finalDir, backupName ?? undefined));
       const sharedEdits = reapplyCapabilitySharedEdits({ runtimeDir, capId: resolved.id, stripFiles: candidateFiles, applyFiles: files, manifest });
+      if (opts.materialize) {
+        materializeCapabilitySkills(
+          opts.materialize.runtimeConfigDir,
+          runtimeDir,
+          opts.materialize.runtime,
+          opts.materialize.scope,
+        );
+      }
       // COMMIT: rewrite WITHOUT _pending. Clearing the intent IS the commit.
       ledgerMod.recordInstall(runtimeDir, {
         id: resolved.id,
@@ -1196,6 +1215,14 @@ async function upgradeCapability(spec: string, opts: LifecycleOptions): Promise<
 
       // Re-derive shared edits across ALL candidate files: strip old marker entries, apply new.
       const sharedEdits = reapplyCapabilitySharedEdits({ runtimeDir, capId: resolved.id, stripFiles: candidateFiles, applyFiles: files, manifest: newManifest });
+      if (opts.materialize) {
+        materializeCapabilitySkills(
+          opts.materialize.runtimeConfigDir,
+          runtimeDir,
+          opts.materialize.runtime,
+          opts.materialize.scope,
+        );
+      }
 
       // COMMIT: rewrite the entry WITHOUT _pendingUpgrade. Clearing the intent IS the commit.
       const relCapDir = path.relative(runtimeDir, finalDir);
@@ -1281,6 +1308,18 @@ function removeCapability(id: string, opts: LifecycleOptions): RemoveResult {
     }
     const entry = ledger && Object.prototype.hasOwnProperty.call(ledger.entries, id) ? ledger.entries[id] : null;
     if (!entry) return { status: 'not_installed', id };
+
+    const installedManifest = readManifest(capDir(runtimeDir, id));
+    if (opts.materialize && installedManifest) {
+      withdrawCapabilitySkills(
+        opts.materialize.runtimeConfigDir,
+        runtimeDir,
+        id,
+        opts.materialize.runtime,
+        opts.materialize.scope,
+        installedManifest,
+      );
+    }
 
     // 1. Surgically strip capability-owned shared-config entries (user edits untouched).
     const strippedEdits = stripCapabilitySharedEdits({
