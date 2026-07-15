@@ -128,6 +128,7 @@ build/
 /gsd-core/bin/lib/schema-detect.cjs
 /gsd-core/bin/lib/runtime-name-policy.cjs
 /gsd-core/bin/lib/runtime-slash.cjs
+/gsd-core/bin/lib/eval-gates.cjs
 /gsd-core/bin/lib/observability/event.cjs
 /gsd-core/bin/lib/workstream-inventory-builder.cjs
 /gsd-core/bin/lib/plan-scan.cjs

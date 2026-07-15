@@ -285,6 +285,7 @@ const { routeInitCommand } = require('./lib/init-command-router.cjs');
 // here, invoked from case 'init' below.
 const { warnIfStaleBake } = require('./lib/stale-bake-guard.cjs');
 const loopResolver = require('./lib/loop-resolver.cjs');
+const evalGates = require('./lib/eval-gates.cjs');
 const capabilityState = require('./lib/capability-state.cjs');
 const capabilityWriter = require('./lib/capability-writer.cjs');
 const { routePhaseCommand } = require('./lib/phase-command-router.cjs');
@@ -1701,9 +1702,34 @@ async function runCommand(command, args, cwd, raw, defaultValue, originalCommand
           activeCap: loopActiveCap,
           runtime: loopRuntime,
         });
+      } else if (loopSubcommand === 'eval-gates') {
+        let loopConfigDir = null;
+        const configDirEqArg = args.find(arg => arg.startsWith('--config-dir='));
+        const configDirIdx = args.indexOf('--config-dir');
+        if (configDirEqArg) {
+          loopConfigDir = configDirEqArg.slice('--config-dir='.length).trim();
+        } else if (configDirIdx !== -1) {
+          const value = args[configDirIdx + 1];
+          if (!value || value.startsWith('--')) error('Missing value for --config-dir', ERROR_REASON ? ERROR_REASON.USAGE : undefined);
+          loopConfigDir = value;
+        }
+        let loopPhase = undefined;
+        const phaseEqArg = args.find(arg => arg.startsWith('--phase='));
+        const phaseIdx = args.indexOf('--phase');
+        if (phaseEqArg) {
+          loopPhase = phaseEqArg.slice('--phase='.length).trim();
+        } else if (phaseIdx !== -1) {
+          const value = args[phaseIdx + 1];
+          if (!value || value.startsWith('--')) error('Missing value for --phase', ERROR_REASON ? ERROR_REASON.USAGE : undefined);
+          loopPhase = value;
+        }
+        evalGates.cmdLoopEvalGates(cwd, args[2], raw, {
+          configDir: loopConfigDir ? path.resolve(loopConfigDir) : undefined,
+          phase: loopPhase,
+        });
       } else {
         error(
-          `Unknown loop subcommand: ${loopSubcommand}. Available: render-hooks`,
+          `Unknown loop subcommand: ${loopSubcommand}. Available: render-hooks, eval-gates`,
           ERROR_REASON ? ERROR_REASON.SDK_UNKNOWN_COMMAND : undefined,
         );
       }
