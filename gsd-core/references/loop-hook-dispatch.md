@@ -22,6 +22,14 @@ execute:wave:post, execute:post, verify:pre, verify:post, ship:pre, ship:post).
 `activeHooks` is an array of enabled hook entries for the named point. It is empty (or absent)
 when no capability has registered an active hook at this point — treat that as a no-op.
 
+## Point ordering
+
+At every point, the runner must delete artifacts named by active step `produces`, dispatch active
+steps in array order, inject active contributions, and then evaluate gates through
+`gsd_run loop eval-gates <point> --raw`. A blocking evaluated result with `block: true` halts the
+current workflow before its owned work; advisory `agentVerdict` results never block by themselves.
+Missing consumed artifacts skip only that hook. This ordering is shared by every host workflow.
+
 ## Dispatch rules by `kind`
 
 ### `contribution`

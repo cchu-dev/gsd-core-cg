@@ -490,10 +490,19 @@ Read the `activeHooks` array directly from `PLAN_PRE_HOOKS_JSON` / `HOOKS_JSON` 
 
 **Branch 1 — all plan:pre hooks inactive (`activeHooks` is empty or absent):** Skip to step 6.
 
-**Generic step hook dispatch contract:** For each active entry where `kind == "step"`:
-- If `ref.skill` is set, dispatch with `Skill(skill="gsd-${ref.skill}", args="${PHASE} --auto ${GSD_WS}")` when pipeline mode allows auto-chaining. Prepend `gsd-` to `ref.skill` — `ui-phase` → `gsd-ui-phase`.
-- If `ref.agent` is set, dispatch with `Agent(prompt=filled_hook_fragment, subagent_type=ref.agent, model="{researcher_model}")`. Use the hook's `fragment.inline` as the prompt body and fill phase fields before spawning.
-- The `research` hook is handled by §5.1's research decision. The `pattern-mapper` hook is handled by §7.8 after `RESEARCH_PATH` is known. Future plan:pre agent hooks use the same `ref.agent` fragment contract.
+**Generic step hook dispatch contract:** For each active entry where `kind == "step"`,
+dispatch third-party hooks unconditionally in `activeHooks` array order, regardless of
+manual versus pipeline mode. If `ref.skill` is set, use
+`Skill(skill="gsd-${ref.skill}", args="${PHASE} --auto ${GSD_WS}")`; prepend `gsd-`
+to `ref.skill` — `ui-phase` → `gsd-ui-phase`. If `ref.agent` is set, use
+`Agent(prompt=filled_hook_fragment, subagent_type=ref.agent, model="{researcher_model}")`.
+Fill phase fields into `fragment.inline` before spawning.
+
+The existing `research`, UI auto-chain, and `pattern-mapper` sections remain the only
+special cases: they own their artifact checks and user-facing branches, but must still
+dispatch any third-party step hook that is not one of those named handlers. A missing
+consumed artifact skips only that hook. Contributions targeting the planner are injected
+in array order after all step dispatches and before planner work.
 
 **AI integration capability:** If the active `ai-integration` step hook is present, `AI_SPEC_PATH` is empty, and the phase goal contains AI keywords (`agent`, `llm`, `rag`, `chatbot`, `embedding`, `langchain`, `llamaindex`, `crewai`, `langgraph`, `openai`, `anthropic`, `vector`, `eval`, `ai system`), then:
 - In pipeline / `--auto` mode, invoke the hook's `ref.skill` via `Skill(skill="gsd-${ref.skill}", args="${PHASE} --auto ${GSD_WS}")`.
