@@ -133,22 +133,14 @@ When `USE_WORKTREES` (project-level) is `false`, all executor agents run without
 
 `USE_WORKTREES` is also automatically set to `false` for the duration of a run when `worktree base-check` detects that the orchestrator HEAD has diverged from the worktree fork base (the #683 condition — e.g. an unmerged milestone or feature branch). This check runs only when `RUNTIME=claude` because `isolation="worktree"` is a Claude Code-specific feature; other runtimes do not use it. The auto-degrade prints a one-line warning to stderr and falls through to the sequential path so executors do not hit the exit-42 worktree-branch-check halt. To restore parallel worktree execution, set `worktree.baseRef:"head"` in `.claude/settings.local.json` (or run `gsd-tools worktree set-baseref`) — this makes the fork base track the live HEAD instead of a fixed remote ref. The `worktree-branch-check` exit-42 guard inside each executor remains in place as a backstop.
 
-Read context window size for adaptive prompt enrichment:
-
+Read context size for prompt enrichment:
 ```bash
 CONTEXT_WINDOW=$(gsd_run query config-get context_window 2>/dev/null || echo "200000")
 ```
-
-When `CONTEXT_WINDOW >= 500000` (1M-class models), subagent prompts include richer context:
-- Executor agents receive prior wave SUMMARY.md files and the phase CONTEXT.md/RESEARCH.md
-- Verifier agents receive all PLAN.md, SUMMARY.md, CONTEXT.md files plus REQUIREMENTS.md
-- This enables cross-phase awareness and history-aware verification
-
-When `CONTEXT_WINDOW < 200000` (sub-200K models), subagent prompts are thinned to reduce static overhead:
-- Executor agents omit extended deviation rule examples and checkpoint examples from inline prompt — load on-demand via @~/.claude/gsd-core/references/executor-examples.md
-- Planner agents omit extended anti-pattern lists and specificity examples from inline prompt — load on-demand via @~/.claude/gsd-core/references/planner-antipatterns.md
-- Core rules and decision logic remain inline; only verbose examples and edge-case lists are extracted
-- This reduces executor static overhead by ~40% while preserving behavioral correctness
+For `CONTEXT_WINDOW >= 500000`, executor prompts add prior_wave_summaries and
+phase CONTEXT.md/RESEARCH.md; verifier prompts add PLAN.md, SUMMARY.md,
+CONTEXT.md, and REQUIREMENTS.md. For `CONTEXT_WINDOW < 200000`, load verbose
+executor examples and planner antipatterns from their references on demand.
 
 **If `phase_found` is false:** Error — phase directory not found.
 **If `plan_count` is 0:** Error — no plans found in phase.
@@ -183,21 +175,13 @@ TDD_MODE=$(gsd_run loop render-hooks execute:post --active-cap tdd)
 
 ### Execute:pre capability dispatch
 
-Before the first resume check or executor dispatch, resolve and run the active
-`execute:pre` hooks. This point is shared by worktree and sequential execution.
-Read `activeHooks` from the JSON in-context (never through a shell parser), then
-dispatch each active step in array order: `ref.skill` uses
-`Skill(skill="gsd-${ref.skill}", args="${PHASE_NUMBER}")`, and `ref.agent` uses
-the declared agent and filled `fragment.inline`. Contributions are injected into
-their declared target before execution begins. Gate evaluation follows the
-generic point-runner contract in `references/loop-hook-dispatch.md`.
+Apply `references/loop-hook-dispatch.md`: delete `produces`, dispatch `ref.skill`
+with `Skill(skill="gsd-${ref.skill}", args="${PHASE_NUMBER}")` or `ref.agent`,
+inject, and run `loop eval-gates execute:pre --raw` before resume/executor dispatch.
 
 ```bash
 EXECUTE_PRE_HOOKS_JSON=$(gsd_run loop render-hooks execute:pre --raw)
 ```
-
-If `activeHooks` is empty, continue silently. A blocking gate whose evaluated
-verdict has `block == true` halts before any executor is spawned.
 
 <step name="safe_resume_gate">
 Before trusting `STATE.md` or dispatching any executor, derive `CURRENT_PLAN_ID`
@@ -581,18 +565,11 @@ increases monotonically across waves. `{status}` is `complete` (success),
 
 2.75. **Execute:wave:pre capability dispatch (before either executor path):**
 
-Resolve this point after the wave is selected and before spawning the first
-worktree or sequential executor. The same rendered envelope and array-order
-dispatch apply to both paths:
-
 ```bash
 WAVE_PRE_HOOKS_JSON=$(gsd_run loop render-hooks execute:wave:pre --raw)
 ```
-
-Read `activeHooks` in-context. Dispatch step skills/agents, inject contribution
-fragments, and evaluate gates using the generic point-runner contract. A blocking
-`block == true` verdict stops the wave before either the worktree or sequential
-executor branch runs.
+Delete `produces`, dispatch/inject, then run `loop eval-gates execute:wave:pre --raw`;
+`block == true` stops before either worktree or sequential executor path.
 
 3. **Spawn executor agents:**
 
@@ -606,8 +583,6 @@ executor branch runs.
    For 1M+ models (Opus 4.6, Sonnet 4.6), richer context can be passed directly.
 
    **Worktree mode** (`USE_WORKTREES_FOR_PLAN` is not `false` — evaluated per-plan in step 2.5):
-
-   The `execute:wave:pre` dispatch above has completed before this worktree is created.
 
    Before spawning, capture the current HEAD:
    ```bash
@@ -729,8 +704,6 @@ executor branch runs.
    > **ORCHESTRATOR RULE — CODEX RUNTIME**: After calling Agent() above to spawn executor agent(s), stop working on this task immediately. Do not read more files, edit code, or run tests related to this task while the subagent is active. Wait for the subagent to return its result. This prevents duplicate work, conflicting edits, and wasted context. Only resume when the subagent result is available.
 
    **Sequential mode** (`USE_WORKTREES_FOR_PLAN` is `false` — either project-level `USE_WORKTREES=false`, or per-plan submodule intersection forced it false in step 2.5):
-
-   The `execute:wave:pre` dispatch above has completed before this main-tree executor runs.
 
    Omit `isolation="worktree"` from the Agent call. Replace the `<parallel_execution>` block with:
 

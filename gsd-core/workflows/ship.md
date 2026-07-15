@@ -89,6 +89,9 @@ Verify the work is ready to ship:
    `kind == "contribution"` fragment into its declared target. This applies to
    third-party capabilities unconditionally. A consumed artifact that is absent
    skips only its hook, and `onError: skip` continues to the next hook.
+   Delete active step `produces` artifacts before dispatch, inject contributions
+   after steps, then run `gsd_run loop eval-gates ship:pre --raw`; a blocking
+   `block == true` result halts before push.
 
 7. **Security ship gate (capability-driven).**
 

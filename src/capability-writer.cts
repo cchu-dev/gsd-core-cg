@@ -58,6 +58,8 @@ const { planningDir } = planningWorkspaceMod;
 import nodefs = require('fs');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 import nodepath = require('path');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+import nodeos = require('os');
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -100,6 +102,8 @@ interface SetCapabilityStateOptions {
     resolveAttribution?: (runtime: string) => string | null | undefined;
   };
 }
+
+type SurfaceLayout = Parameters<typeof applySurface>[1];
 
 /**
  * Canonical **mutation-verb result** for the capability-writer seam (ADR-1411 P3 / #1416).
@@ -360,10 +364,8 @@ function setCapabilityState(
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const runtimeArtifactLayout = require('./runtime-artifact-layout.cjs') as {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        resolveRuntimeArtifactLayout: (runtime: string, configDir: string, scope: string) => any;
+        resolveRuntimeArtifactLayout: (runtime: string, configDir: string, scope: 'local' | 'global') => SurfaceLayout;
       };
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       const layout = runtimeArtifactLayout.resolveRuntimeArtifactLayout(runtime, resolvedConfigDir, scope);
       const commandsGsdDir = _resolveCommandsGsdDir();
       const manifest = _resolveManifest(commandsGsdDir, resolvedConfigDir);
@@ -375,7 +377,6 @@ function setCapabilityState(
       // driven runtimes will lack the Co-Authored-By trailer that install adds.
       // Parity is proven when resolveAttribution IS provided (see
       // tests/issue-1575-agent-descriptor-parity.test.cjs).
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
       const capabilityRoot = opts.materialize.capabilityRoot;
       const targetIsInstalledOverlay = capabilityRoot
         ? desired.some((entry) => nodefs.existsSync(nodepath.join(
@@ -496,7 +497,7 @@ function cmdCapabilitySet(
             runtime: options.runtime,
             scope: options.scope === 'project' ? 'local' : 'global',
             capabilityRoot: options.capabilityRoot ?? (
-              options.scope === 'project' ? cwd : (process.env['GSD_HOME'] ?? require('node:os').homedir())
+              options.scope === 'project' ? cwd : (process.env['GSD_HOME'] ?? nodeos.homedir())
             ),
           },
         }

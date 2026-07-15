@@ -6,8 +6,11 @@
  * active hooks with the same loop resolver used by render-hooks.
  */
 
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 import fs = require('node:fs');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 import path = require('node:path');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 import childProcess = require('node:child_process');
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -183,6 +186,26 @@ function evaluateGates(hooks: unknown[], context: GateContext, deps: GateDeps = 
   return { gates };
 }
 
+/** Delete artifacts declared by active step hooks before a point is dispatched. */
+function clearProducedArtifacts(hooks: unknown[], cwd: string): string[] {
+  const removed: string[] = [];
+  const root = path.resolve(cwd);
+  for (const rawHook of hooks) {
+    const hook = asRecord(rawHook);
+    if (!hook || hook['kind'] !== 'step' || !Array.isArray(hook['produces'])) continue;
+    for (const produced of hook['produces']) {
+      if (typeof produced !== 'string' || produced.trim().length === 0) continue;
+      const target = path.resolve(root, produced);
+      if (target !== root && !target.startsWith(`${root}${path.sep}`)) {
+        throw new Error(`produced artifact escapes project root: ${produced}`);
+      }
+      fs.rmSync(target, { force: true, recursive: false });
+      removed.push(target);
+    }
+  }
+  return removed;
+}
+
 function runCheckQuery(query: string, phase: string | undefined, context: GateContext): unknown {
   const executable = path.resolve(__dirname, '..', 'gsd-tools.cjs');
   const args = ['check', query];
@@ -233,5 +256,6 @@ export = {
   evaluateConfigEquals,
   evaluateGateCheck,
   evaluateGates,
+  clearProducedArtifacts,
   cmdLoopEvalGates,
 };

@@ -82,10 +82,6 @@ interface ApplySurfaceOptions {
   platform?: string;
 }
 
-interface CapabilitySurfaceRegistry {
-  capabilities?: Record<string, unknown>;
-}
-
 // ---------------------------------------------------------------------------
 // State IO
 // ---------------------------------------------------------------------------
@@ -343,8 +339,7 @@ function resolveSurface(runtimeConfigDir: string, manifest: Map<string, string[]
       }
       // Prototype-pollution guard (parity with _capabilitySkillsForMode in install-profiles.cts)
       if (capId === '__proto__' || capId === 'constructor' || capId === 'prototype') continue;
-      const thirdPartyStems = val.filter((stem) => !skillManifest.has(stem));
-      if (thirdPartyStems.length > 0) merged[capId] = thirdPartyStems;
+      merged[capId] = val;
     }
     cm = merged;
   }

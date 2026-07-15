@@ -502,7 +502,9 @@ The existing `research`, UI auto-chain, and `pattern-mapper` sections remain the
 special cases: they own their artifact checks and user-facing branches, but must still
 dispatch any third-party step hook that is not one of those named handlers. A missing
 consumed artifact skips only that hook. Contributions targeting the planner are injected
-in array order after all step dispatches and before planner work.
+in array order after all step dispatches and before planner work. Delete active step
+`produces` artifacts before dispatch and evaluate blocking gates with
+`gsd_run loop eval-gates plan:pre --raw` before planner work continues.
 
 **AI integration capability:** If the active `ai-integration` step hook is present, `AI_SPEC_PATH` is empty, and the phase goal contains AI keywords (`agent`, `llm`, `rag`, `chatbot`, `embedding`, `langchain`, `llamaindex`, `crewai`, `langgraph`, `openai`, `anthropic`, `vector`, `eval`, `ai system`), then:
 - In pipeline / `--auto` mode, invoke the hook's `ref.skill` via `Skill(skill="gsd-${ref.skill}", args="${PHASE} --auto ${GSD_WS}")`.
