@@ -38,15 +38,19 @@ describe('resolveRuntimeArtifactLayout — claude local', () => {
     const layout = resolveRuntimeArtifactLayout('claude', FAKE_DIR, 'local');
     assert.strictEqual(layout.runtime, 'claude');
     assert.strictEqual(layout.configDir, FAKE_DIR);
-    assert.strictEqual(layout.kinds.length, 2);
-    assert.strictEqual(layout.kinds[0].kind, 'commands');
-    assert.strictEqual(layout.kinds[0].destSubpath, 'commands'); // #1367: flat gsd-<cmd>.md layout
+    assert.strictEqual(layout.kinds.length, 3);
+    assert.strictEqual(layout.kinds[0].kind, 'skills');
+    assert.strictEqual(layout.kinds[0].destSubpath, 'skills');
     assert.strictEqual(layout.kinds[0].prefix, 'gsd-');
     assert.strictEqual(typeof layout.kinds[0].stage, 'function');
-    assert.strictEqual(layout.kinds[1].kind, 'agents');
-    assert.strictEqual(layout.kinds[1].destSubpath, 'agents');
+    assert.strictEqual(layout.kinds[1].kind, 'commands');
+    assert.strictEqual(layout.kinds[1].destSubpath, 'commands'); // #1367: flat gsd-<cmd>.md layout
     assert.strictEqual(layout.kinds[1].prefix, 'gsd-');
     assert.strictEqual(typeof layout.kinds[1].stage, 'function');
+    assert.strictEqual(layout.kinds[2].kind, 'agents');
+    assert.strictEqual(layout.kinds[2].destSubpath, 'agents');
+    assert.strictEqual(layout.kinds[2].prefix, 'gsd-');
+    assert.strictEqual(typeof layout.kinds[2].stage, 'function');
   });
 });
 
@@ -375,7 +379,7 @@ describe('resolveRuntimeArtifactLayout edge-cases', () => {
     assert.strictEqual(layout.kinds[0].prefix, 'gsd-'); // #947: bare-stem prefix='' reversed
   });
 
-  test('claude local has both commands and agents kinds', () => {
+  test('claude local has skills, commands, and agents kinds', () => {
     const layout = resolveRuntimeArtifactLayout('claude', '/tmp/x', 'local');
     const kindNames = layout.kinds.map(k => k.kind);
     assert.ok(kindNames.includes('commands'), 'should have commands kind');

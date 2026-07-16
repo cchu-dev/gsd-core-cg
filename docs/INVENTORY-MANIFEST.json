@@ -339,6 +339,7 @@
       "edge-probe.cjs",
       "embedding-adapter.cjs",
       "eval-command-router.cjs",
+      "eval-gates.cjs",
       "eval.cjs",
       "external-descriptor-trust.cjs",
       "external-job.cjs",

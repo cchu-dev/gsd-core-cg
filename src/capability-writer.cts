@@ -40,6 +40,7 @@ const { resolveCapabilityRuntimeState, _resolveManifest, _resolveCommandsGsdDir 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 import surfaceMod = require('./surface.cjs');
 const { readSurface, writeSurface, applySurface } = surfaceMod;
+const { materializeCapabilitySkills, withdrawCapabilitySkills } = surfaceMod;
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 import installProfilesMod = require('./install-profiles.cjs');
@@ -57,6 +58,8 @@ const { planningDir } = planningWorkspaceMod;
 import nodefs = require('fs');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 import nodepath = require('path');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+import nodeos = require('os');
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -92,8 +95,15 @@ interface DesiredCapability {
 }
 
 interface SetCapabilityStateOptions {
-  materialize?: { runtime: string; scope: string; resolveAttribution?: (runtime: string) => string | null | undefined };
+  materialize?: {
+    runtime: string;
+    scope: 'local' | 'global';
+    capabilityRoot?: string;
+    resolveAttribution?: (runtime: string) => string | null | undefined;
+  };
 }
+
+type SurfaceLayout = Parameters<typeof applySurface>[1];
 
 /**
  * Canonical **mutation-verb result** for the capability-writer seam (ADR-1411 P3 / #1416).
@@ -354,10 +364,8 @@ function setCapabilityState(
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const runtimeArtifactLayout = require('./runtime-artifact-layout.cjs') as {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        resolveRuntimeArtifactLayout: (runtime: string, configDir: string, scope: string) => any;
+        resolveRuntimeArtifactLayout: (runtime: string, configDir: string, scope: 'local' | 'global') => SurfaceLayout;
       };
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       const layout = runtimeArtifactLayout.resolveRuntimeArtifactLayout(runtime, resolvedConfigDir, scope);
       const commandsGsdDir = _resolveCommandsGsdDir();
       const manifest = _resolveManifest(commandsGsdDir, resolvedConfigDir);
@@ -369,10 +377,34 @@ function setCapabilityState(
       // driven runtimes will lack the Co-Authored-By trailer that install adds.
       // Parity is proven when resolveAttribution IS provided (see
       // tests/issue-1575-agent-descriptor-parity.test.cjs).
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-      applySurface(resolvedConfigDir, layout, manifest, undefined, registry, opts?.materialize?.resolveAttribution
-        ? { resolveAttribution: opts.materialize.resolveAttribution }
-        : undefined);
+      const capabilityRoot = opts.materialize.capabilityRoot;
+      const targetIsInstalledOverlay = capabilityRoot
+        ? desired.some((entry) => nodefs.existsSync(nodepath.join(
+            nodepath.basename(nodepath.resolve(capabilityRoot)) === 'capabilities'
+              ? nodepath.resolve(capabilityRoot)
+              : nodepath.join(nodepath.resolve(capabilityRoot), '.gsd', 'capabilities'),
+            entry.id,
+            'capability.json',
+          )))
+        : false;
+      // An overlay owns its physical skill directories, while first-party surface
+      // application owns the packaged skill tree. Do not re-run the latter for an
+      // overlay-only toggle: it could rewrite a colliding first-party directory.
+      if (!targetIsInstalledOverlay) {
+        applySurface(resolvedConfigDir, layout, manifest, undefined, registry, opts?.materialize?.resolveAttribution
+          ? { resolveAttribution: opts.materialize.resolveAttribution }
+          : undefined);
+      }
+      if (opts.materialize.capabilityRoot) {
+        for (const entry of desired) {
+          if (entry.enabled === false) {
+            withdrawCapabilitySkills(resolvedConfigDir, opts.materialize.capabilityRoot, entry.id, runtime, scope);
+          }
+        }
+        if (desired.some((entry) => entry.enabled === true)) {
+          materializeCapabilitySkills(resolvedConfigDir, opts.materialize.capabilityRoot, runtime, scope);
+        }
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       // Fix C: materialise was explicitly requested — a failure is an error (non-zero exit),
@@ -447,7 +479,7 @@ function cmdCapabilitySet(
   cwd: string,
   runtimeConfigDir: string | undefined | null,
   capId: string,
-  options: { enabled?: boolean; gates?: Record<string, boolean>; runtime?: string; scope?: string },
+  options: { enabled?: boolean; gates?: Record<string, boolean>; runtime?: string; scope?: string; capabilityRoot?: string },
   raw: boolean,
 ): void {
   const desired: DesiredCapability[] = [
@@ -460,7 +492,15 @@ function cmdCapabilitySet(
 
   const opts: SetCapabilityStateOptions | undefined =
     options.runtime
-      ? { materialize: { runtime: options.runtime, scope: options.scope ?? 'global' } }
+      ? {
+          materialize: {
+            runtime: options.runtime,
+            scope: options.scope === 'project' ? 'local' : 'global',
+            capabilityRoot: options.capabilityRoot ?? (
+              options.scope === 'project' ? cwd : (process.env['GSD_HOME'] ?? nodeos.homedir())
+            ),
+          },
+        }
       : undefined;
 
   const result = setCapabilityState(cwd, runtimeConfigDir, desired, opts);

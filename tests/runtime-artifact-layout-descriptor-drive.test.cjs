@@ -19,7 +19,7 @@
  *   the old switch's scope-agnostic behaviour.
  *
  *   For runtimes that had explicit scope branches in the old switch
- *   (claude: distinct local=commands+agents; cline: local=[]; kimi: local=[]),
+ *   (claude: distinct local=skills+commands+agents; cline: local=[]; kimi: local=[]),
  *   the STEP-0 golden matches the descriptor exactly and is left unchanged.
  *
  * Unknown runtime case:
@@ -53,6 +53,7 @@ const GOLDEN = {
     { kind: 'skills', destSubpath: 'skills', prefix: 'gsd-' },
   ],
   'claude/local': [
+    { kind: 'skills',   destSubpath: 'skills',   prefix: 'gsd-' },
     { kind: 'commands', destSubpath: 'commands', prefix: 'gsd-' }, // #1367: flat gsd-<cmd>.md
     { kind: 'agents',   destSubpath: 'agents',   prefix: 'gsd-' },
   ],

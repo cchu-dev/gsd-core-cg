@@ -417,6 +417,14 @@ const capabilities = {
         ],
         "local": [
           {
+            "kind": "skills",
+            "destSubpath": "skills",
+            "prefix": "gsd-",
+            "nesting": "flat",
+            "recursive": false,
+            "converter": "convertClaudeCommandToClaudeSkill"
+          },
+          {
             "kind": "commands",
             "destSubpath": "commands",
             "prefix": "gsd-",
@@ -4144,6 +4152,14 @@ const runtimes = {
           }
         ],
         "local": [
+          {
+            "kind": "skills",
+            "destSubpath": "skills",
+            "prefix": "gsd-",
+            "nesting": "flat",
+            "recursive": false,
+            "converter": "convertClaudeCommandToClaudeSkill"
+          },
           {
             "kind": "commands",
             "destSubpath": "commands",

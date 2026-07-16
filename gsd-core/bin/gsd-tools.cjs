@@ -285,6 +285,7 @@ const { routeInitCommand } = require('./lib/init-command-router.cjs');
 // here, invoked from case 'init' below.
 const { warnIfStaleBake } = require('./lib/stale-bake-guard.cjs');
 const loopResolver = require('./lib/loop-resolver.cjs');
+const evalGates = require('./lib/eval-gates.cjs');
 const capabilityState = require('./lib/capability-state.cjs');
 const capabilityWriter = require('./lib/capability-writer.cjs');
 const { routePhaseCommand } = require('./lib/phase-command-router.cjs');
@@ -1701,9 +1702,34 @@ async function runCommand(command, args, cwd, raw, defaultValue, originalCommand
           activeCap: loopActiveCap,
           runtime: loopRuntime,
         });
+      } else if (loopSubcommand === 'eval-gates') {
+        let loopConfigDir = null;
+        const configDirEqArg = args.find(arg => arg.startsWith('--config-dir='));
+        const configDirIdx = args.indexOf('--config-dir');
+        if (configDirEqArg) {
+          loopConfigDir = configDirEqArg.slice('--config-dir='.length).trim();
+        } else if (configDirIdx !== -1) {
+          const value = args[configDirIdx + 1];
+          if (!value || value.startsWith('--')) error('Missing value for --config-dir', ERROR_REASON ? ERROR_REASON.USAGE : undefined);
+          loopConfigDir = value;
+        }
+        let loopPhase = undefined;
+        const phaseEqArg = args.find(arg => arg.startsWith('--phase='));
+        const phaseIdx = args.indexOf('--phase');
+        if (phaseEqArg) {
+          loopPhase = phaseEqArg.slice('--phase='.length).trim();
+        } else if (phaseIdx !== -1) {
+          const value = args[phaseIdx + 1];
+          if (!value || value.startsWith('--')) error('Missing value for --phase', ERROR_REASON ? ERROR_REASON.USAGE : undefined);
+          loopPhase = value;
+        }
+        evalGates.cmdLoopEvalGates(cwd, args[2], raw, {
+          configDir: loopConfigDir ? path.resolve(loopConfigDir) : undefined,
+          phase: loopPhase,
+        });
       } else {
         error(
-          `Unknown loop subcommand: ${loopSubcommand}. Available: render-hooks`,
+          `Unknown loop subcommand: ${loopSubcommand}. Available: render-hooks, eval-gates`,
           ERROR_REASON ? ERROR_REASON.SDK_UNKNOWN_COMMAND : undefined,
         );
       }
@@ -1946,12 +1972,21 @@ async function runCommand(command, args, cwd, raw, defaultValue, originalCommand
           raw,
         );
       } else if (capSubcommand === 'install') {
-        // capability install <spec> [--integrity sha512-…] [--scope global|project] [--yes] [--shared-file <rel>]…
+        // capability install <spec> [--integrity sha512-…] [--scope global|project] [--runtime <r>] [--config-dir <dir>] [--yes] [--shared-file <rel>]…
         const spec = args[2];
         if (!spec || spec.startsWith('--')) {
           error('Missing <spec> for: capability install <spec>', ERROR_REASON ? ERROR_REASON.USAGE : undefined);
         }
         const { scope, runtimeDir } = capResolveScope(capFlagValue('--scope'));
+        const installRuntime = capFlagValue('--runtime');
+        const installConfigDir = capFlagValue('--config-dir');
+        const installSurface = installRuntime || installConfigDir
+          ? {
+              runtime: installRuntime || 'claude',
+              runtimeConfigDir: require('./lib/runtime-homes.cjs').getGlobalConfigDir(installRuntime || 'claude', installConfigDir),
+              scope: scope === 'project' ? 'local' : 'global',
+            }
+          : undefined;
         const lifecycle = require('./lib/capability-lifecycle.cjs');
         const trust = require('./lib/capability-trust.cjs');
         // Finding 5(b): bound the --shared-file COUNT EARLY — before reconcile, source resolution,
@@ -1979,6 +2014,7 @@ async function runCommand(command, args, cwd, raw, defaultValue, originalCommand
           // consent home, NOT in the repo). The lifecycle records nothing for global scope.
           scope,
           consentStoreDir: capConsentHome(),
+          materialize: installSurface,
         });
         if (res.status === 'installed') {
           output({
@@ -2122,12 +2158,21 @@ async function runCommand(command, args, cwd, raw, defaultValue, originalCommand
           }
         }
       } else if (capSubcommand === 'remove') {
-        // capability remove <id> [--purge-data] [--scope global|project]
+        // capability remove <id> [--purge-data] [--scope global|project] [--runtime <r>] [--config-dir <dir>]
         const id = args[2];
         if (!id || id.startsWith('--')) {
           error('Missing <id> for: capability remove <id>', ERROR_REASON ? ERROR_REASON.USAGE : undefined);
         }
         const { scope, runtimeDir } = capResolveScope(capFlagValue('--scope'));
+        const removeRuntime = capFlagValue('--runtime');
+        const removeConfigDir = capFlagValue('--config-dir');
+        const removeSurface = removeRuntime || removeConfigDir
+          ? {
+              runtime: removeRuntime || 'claude',
+              runtimeConfigDir: require('./lib/runtime-homes.cjs').getGlobalConfigDir(removeRuntime || 'claude', removeConfigDir),
+              scope: scope === 'project' ? 'local' : 'global',
+            }
+          : undefined;
         const lifecycle = require('./lib/capability-lifecycle.cjs');
         const ledgerMod = require('./lib/capability-ledger.cjs');
         capRunReconcile(runtimeDir, lifecycle, scope); // UX-2: surface reconcile warnings on stderr
@@ -2155,6 +2200,7 @@ async function runCommand(command, args, cwd, raw, defaultValue, originalCommand
           // bundle of the same id cannot silently re-activate against a stale consent.
           scope,
           consentStoreDir: capConsentHome(),
+          materialize: removeSurface,
         });
         if (res.status === 'removed') {
           // #1459 finding 3: a project removal whose consent revoke FAILED (e.g. the consent-store lock

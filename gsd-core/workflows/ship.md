@@ -81,7 +81,19 @@ Verify the work is ready to ship:
    ```
    If `gh` not found or not authenticated: provide setup instructions and exit.
 
-6. **Security ship gate (capability-driven).**
+6. **Generic `ship:pre` capability dispatch.**
+
+   Before the security gate, process every active `ship:pre` entry in array order.
+   Dispatch each `kind == "step"` through its declared `ref.skill` or `ref.agent`,
+   filling `fragment.inline` with the current phase fields; inject every
+   `kind == "contribution"` fragment into its declared target. This applies to
+   third-party capabilities unconditionally. A consumed artifact that is absent
+   skips only its hook, and `onError: skip` continues to the next hook.
+   Delete active step `produces` artifacts before dispatch, inject contributions
+   after steps, then run `gsd_run loop eval-gates ship:pre --raw`; a blocking
+   `block == true` result halts before push.
+
+7. **Security ship gate (capability-driven).**
 
    Resolve active `ship:pre` gate hooks from the capability registry — the registry evaluates each hook's `when` condition, so do **not** read `workflow.security_enforcement` directly:
 
@@ -106,6 +118,7 @@ Verify the work is ready to ship:
      ```
 
    If no active security `ship:pre` gate hook is present (security enforcement off), skip this check silently.
+
 </step>
 
 <step name="push_branch">
