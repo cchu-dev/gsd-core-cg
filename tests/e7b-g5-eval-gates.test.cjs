@@ -124,3 +124,30 @@ test('eval-gates evaluates query checks and downgrades agentVerdict to advisory'
   assert.equal(advisory.gates[0].block, false);
   assert.equal(advisory.gates[0].advisory, true);
 });
+
+test('eval-gates evaluates artifact-frontmatter-equals (first-party security gate shape)', () => {
+  const files = {
+    '/proj/SECURITY.md': '---\nthreats_open: 0\naudited: true\n---\n\n# Security\n',
+    '/proj/OPEN.md': '---\nthreats_open: 2\n---\n',
+    '/proj/NOFM.md': '# no frontmatter\n',
+  };
+  const deps = {
+    exists: (p) => Object.prototype.hasOwnProperty.call(files, p),
+    readFile: (p) => files[p],
+  };
+  const gate = (artifact, field, equals) => ({
+    capId: 'security', kind: 'gate', blocking: true,
+    check: { predicate: { kind: 'artifact-frontmatter-equals', artifact, field, equals } },
+  });
+  const ctx = { cwd: '/proj' };
+  const pass = evalGates.evaluateGates([gate('SECURITY.md', 'threats_open', 0)], ctx, deps);
+  assert.equal(pass.gates[0].block, false);
+  const boolPass = evalGates.evaluateGates([gate('SECURITY.md', 'audited', true)], ctx, deps);
+  assert.equal(boolPass.gates[0].block, false);
+  const mismatch = evalGates.evaluateGates([gate('OPEN.md', 'threats_open', 0)], ctx, deps);
+  assert.equal(mismatch.gates[0].block, true);
+  const missingField = evalGates.evaluateGates([gate('NOFM.md', 'threats_open', 0)], ctx, deps);
+  assert.equal(missingField.gates[0].block, true);
+  const missingFile = evalGates.evaluateGates([gate('ABSENT.md', 'threats_open', 0)], ctx, deps);
+  assert.equal(missingFile.gates[0].block, true);
+});

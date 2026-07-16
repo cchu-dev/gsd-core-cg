@@ -53,6 +53,7 @@ interface GateResult {
 
 interface GateDeps {
   exists?: (filePath: string) => boolean;
+  readFile?: (filePath: string) => string;
   runQuery?: (query: string, phase: string | undefined, context: GateContext) => unknown;
 }
 
@@ -117,6 +118,81 @@ function evaluateConfigEquals(predicate: Record<string, unknown>, context: GateC
   };
 }
 
+// Minimal line-based frontmatter parse (top-level scalar keys only), matching
+// the shape used by first-party artifacts like SECURITY.md (`threats_open: 0`).
+const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
+
+function parseFrontmatterScalars(content: string): Record<string, string> {
+  const m = content.match(FRONTMATTER_RE);
+  if (!m) return {};
+  const data: Record<string, string> = {};
+  for (const line of m[1].split(/\r?\n/)) {
+    const kv = line.match(/^([A-Za-z0-9_][A-Za-z0-9_-]*):\s*(.*)$/);
+    if (!kv) continue;
+    data[kv[1]] = kv[2].trim();
+  }
+  return data;
+}
+
+function frontmatterValueMatches(raw: string, expected: unknown): boolean {
+  if (typeof expected === 'number') {
+    const n = Number(raw);
+    return Number.isFinite(n) && Object.is(n, expected);
+  }
+  if (typeof expected === 'boolean') {
+    return (raw === 'true' && expected === true) || (raw === 'false' && expected === false);
+  }
+  if (expected === null) return raw === 'null' || raw === '~' || raw === '';
+  const unquoted = raw.replace(/^(['"])(.*)\1$/, '$2');
+  return raw === String(expected) || unquoted === String(expected);
+}
+
+function evaluateArtifactFrontmatterEquals(predicate: Record<string, unknown>, context: GateContext, deps: GateDeps): GateResult {
+  const relativePath = predicate['artifact'] ?? predicate['path'];
+  if (typeof relativePath !== 'string' || relativePath.trim().length === 0) {
+    throw new Error('artifact-frontmatter-equals predicate requires a non-empty string "artifact"');
+  }
+  const field = predicate['field'];
+  if (typeof field !== 'string' || field.trim().length === 0) {
+    throw new Error('artifact-frontmatter-equals predicate requires a non-empty string "field"');
+  }
+  if (!Object.prototype.hasOwnProperty.call(predicate, 'equals')) {
+    throw new Error('artifact-frontmatter-equals predicate requires an "equals" value');
+  }
+  const expected = predicate['equals'];
+  const absolutePath = path.resolve(context.cwd, relativePath);
+  const exists = (deps.exists ?? fs.existsSync)(absolutePath);
+  const detailsBase = { kind: 'artifact-frontmatter-equals', artifact: relativePath, field, expected };
+  if (!exists) {
+    return {
+      capId: '', blocking: false, block: true,
+      message: `artifact missing for frontmatter check: ${relativePath}`,
+      onError: 'skip',
+      details: { ...detailsBase, exists: false },
+    };
+  }
+  let content: string;
+  try {
+    content = (deps.readFile ?? ((p: string) => fs.readFileSync(p, 'utf8')))(absolutePath);
+  } catch (err: unknown) {
+    throw new Error(`artifact unreadable for frontmatter check: ${relativePath} (${err instanceof Error ? err.message : String(err)})`);
+  }
+  const data = parseFrontmatterScalars(content);
+  const found = Object.prototype.hasOwnProperty.call(data, field);
+  const raw = found ? data[field] : undefined;
+  const matches = found && frontmatterValueMatches(raw as string, expected);
+  return {
+    capId: '', blocking: false, block: !matches,
+    message: matches
+      ? `frontmatter ${field} equals ${JSON.stringify(expected)} in ${relativePath}`
+      : found
+        ? `frontmatter mismatch for ${field} in ${relativePath}: expected ${JSON.stringify(expected)}, found ${JSON.stringify(raw)}`
+        : `frontmatter field ${field} not found in ${relativePath}`,
+    onError: 'skip',
+    details: { ...detailsBase, exists: true, found, actual: raw },
+  };
+}
+
 function evaluateGateCheck(check: unknown, context: GateContext, deps: GateDeps = {}): Omit<GateResult, 'capId' | 'blocking' | 'onError'> {
   const checkRecord = asRecord(check);
   if (!checkRecord) throw new Error('gate check must be an object');
@@ -135,6 +211,7 @@ function evaluateGateCheck(check: unknown, context: GateContext, deps: GateDeps 
     const kind = predicate['kind'];
     if (kind === 'artifact-exists') return evaluateArtifactExists(predicate, context, deps);
     if (kind === 'config-equals') return evaluateConfigEquals(predicate, context);
+    if (kind === 'artifact-frontmatter-equals') return evaluateArtifactFrontmatterEquals(predicate, context, deps);
     throw new Error(`unknown gate predicate kind: ${String(kind)}`);
   }
 
