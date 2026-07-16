@@ -143,8 +143,9 @@ function frontmatterValueMatches(raw: string, expected: unknown): boolean {
     return (raw === 'true' && expected === true) || (raw === 'false' && expected === false);
   }
   if (expected === null) return raw === 'null' || raw === '~' || raw === '';
+  if (typeof expected !== 'string') return false;
   const unquoted = raw.replace(/^(['"])(.*)\1$/, '$2');
-  return raw === String(expected) || unquoted === String(expected);
+  return raw === expected || unquoted === expected;
 }
 
 function evaluateArtifactFrontmatterEquals(predicate: Record<string, unknown>, context: GateContext, deps: GateDeps): GateResult {
